@@ -1,10 +1,10 @@
 package batchstats
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -30,23 +30,18 @@ type Batcher struct {
 	store database.Store
 	log   slog.Logger
 
-	mu sync.Mutex
-	// TODO: make this a buffered chan instead?
-	buf *database.InsertWorkspaceAgentStatsParams
-	// NOTE: we batch this separately as it's a jsonb field and
-	// pq.Array + unnest doesn't play nicely with this.
-	connectionsByProto []map[string]int64
-	batchSize          int
+	buf       chan database.InsertWorkspaceAgentStatParams
+	batchSize int
 
 	// tickCh is used to periodically flush the buffer.
 	tickCh   <-chan time.Time
 	ticker   *time.Ticker
 	interval time.Duration
 	// flushLever is used to signal the flusher to flush the buffer immediately.
-	flushLever  chan struct{}
-	flushForced atomic.Bool
+	flushLever chan struct{}
 	// flushed is used during testing to signal that a flush has completed.
-	flushed chan<- int
+	flushed  chan<- int
+	flushing atomic.Bool
 }
 
 // Option is a functional option for configuring a Batcher.
@@ -121,6 +116,8 @@ func New(ctx context.Context, opts ...Option) (*Batcher, func(), error) {
 		<-done
 	}
 
+	b.buf = make(chan database.InsertWorkspaceAgentStatParams, b.batchSize)
+
 	return b, closer, nil
 }
 
@@ -132,47 +129,47 @@ func (b *Batcher) Add(
 	workspaceID uuid.UUID,
 	st agentsdk.Stats,
 ) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
+	var p database.InsertWorkspaceAgentStatParams
+	p.ID = uuid.New()
+	p.CreatedAt = database.Now()
+	p.AgentID = agentID
+	p.UserID = userID
+	p.TemplateID = templateID
+	p.WorkspaceID = workspaceID
+	// Convert the map[string]int to a json.RawMessage for Postgres.
+	cbp, err := json.Marshal(st.ConnectionsByProto)
+	if err != nil {
+		b.log.Warn(context.Background(), "failed to marshal connections by proto")
+		cbp = json.RawMessage(`{}`)
+	}
+	p.ConnectionsByProto = cbp
+	p.ConnectionCount = st.ConnectionCount
+	p.RxPackets = st.RxPackets
+	p.RxBytes = st.RxBytes
+	p.TxPackets = st.TxPackets
+	p.TxBytes = st.TxBytes
+	p.SessionCountVSCode = st.SessionCountVSCode
+	p.SessionCountJetBrains = st.SessionCountJetBrains
+	p.SessionCountReconnectingPTY = st.SessionCountReconnectingPTY
+	p.SessionCountSSH = st.SessionCountSSH
+	p.ConnectionMedianLatencyMS = st.ConnectionMedianLatencyMS
 
-	now := database.Now()
-
-	b.buf.ID = append(b.buf.ID, uuid.New())
-	b.buf.CreatedAt = append(b.buf.CreatedAt, now)
-	b.buf.AgentID = append(b.buf.AgentID, agentID)
-	b.buf.UserID = append(b.buf.UserID, userID)
-	b.buf.TemplateID = append(b.buf.TemplateID, templateID)
-	b.buf.WorkspaceID = append(b.buf.WorkspaceID, workspaceID)
-
-	// Store the connections by proto separately as it's a jsonb field. We marshal on flush.
-	// b.buf.ConnectionsByProto = append(b.buf.ConnectionsByProto, st.ConnectionsByProto)
-	b.connectionsByProto = append(b.connectionsByProto, st.ConnectionsByProto)
-
-	b.buf.ConnectionCount = append(b.buf.ConnectionCount, st.ConnectionCount)
-	b.buf.RxPackets = append(b.buf.RxPackets, st.RxPackets)
-	b.buf.RxBytes = append(b.buf.RxBytes, st.RxBytes)
-	b.buf.TxPackets = append(b.buf.TxPackets, st.TxPackets)
-	b.buf.TxBytes = append(b.buf.TxBytes, st.TxBytes)
-	b.buf.SessionCountVSCode = append(b.buf.SessionCountVSCode, st.SessionCountVSCode)
-	b.buf.SessionCountJetBrains = append(b.buf.SessionCountJetBrains, st.SessionCountJetBrains)
-	b.buf.SessionCountReconnectingPTY = append(b.buf.SessionCountReconnectingPTY, st.SessionCountReconnectingPTY)
-	b.buf.SessionCountSSH = append(b.buf.SessionCountSSH, st.SessionCountSSH)
-	b.buf.ConnectionMedianLatencyMS = append(b.buf.ConnectionMedianLatencyMS, st.ConnectionMedianLatencyMS)
+	b.buf <- p
 
 	// If the buffer is over 80% full, signal the flusher to flush immediately.
 	// We want to trigger flushes early to reduce the likelihood of
 	// accidentally growing the buffer over batchSize.
-	filled := float64(len(b.buf.ID)) / float64(b.batchSize)
-	if filled >= 0.8 && !b.flushForced.Load() {
+	filled := float64(len(b.buf)) / float64(b.batchSize)
+	if filled >= 0.8 && !b.flushing.Load() {
+		b.log.Debug(context.Background(), "triggering flush", slog.F("id", p.ID))
 		b.flushLever <- struct{}{}
-		b.flushForced.Store(true)
+		b.flushing.Store(true)
 	}
 	return nil
 }
 
 // Run runs the batcher.
 func (b *Batcher) run(ctx context.Context) {
-	b.initBuf(b.batchSize)
 	// nolint:gocritic // This is only ever used for one thing - inserting agent stats.
 	authCtx := dbauthz.AsSystemRestricted(ctx)
 	for {
@@ -192,13 +189,9 @@ func (b *Batcher) run(ctx context.Context) {
 
 // flush flushes the batcher's buffer.
 func (b *Batcher) flush(ctx context.Context, forced bool, reason string) {
-	b.mu.Lock()
-	b.flushForced.Store(true)
+	count := len(b.buf)
 	start := time.Now()
-	count := len(b.buf.ID)
 	defer func() {
-		b.flushForced.Store(false)
-		b.mu.Unlock()
 		// Notify that a flush has completed. This only happens in tests.
 		if b.flushed != nil {
 			select {
@@ -217,73 +210,52 @@ func (b *Batcher) flush(ctx context.Context, forced bool, reason string) {
 				slog.F("reason", reason),
 			)
 		}
+		b.flushing.Store(false)
 	}()
 
-	if len(b.buf.ID) == 0 {
+	if count == 0 {
 		return
 	}
 
-	// marshal connections by proto
-	payload, err := json.Marshal(b.connectionsByProto)
-	if err != nil {
-		b.log.Error(ctx, "unable to marshal agent connections by proto, dropping data", slog.Error(err))
-		b.buf.ConnectionsByProto = json.RawMessage(`[]`)
-	} else {
-		b.buf.ConnectionsByProto = payload
+	var batch database.InsertWorkspaceAgentStatsParams
+	var rawMessages [][]byte
+	// only read a limited number of messages from buf
+	for i := 0; i < count; i++ {
+		p, ok := <-b.buf
+		if !ok {
+			break // closed?
+		}
+		batch.ID = append(batch.ID, p.ID)
+		batch.AgentID = append(batch.AgentID, p.AgentID)
+		batch.UserID = append(batch.UserID, p.UserID)
+		batch.TemplateID = append(batch.TemplateID, p.TemplateID)
+		batch.WorkspaceID = append(batch.WorkspaceID, p.WorkspaceID)
+		batch.CreatedAt = append(batch.CreatedAt, p.CreatedAt)
+		batch.ConnectionCount = append(batch.ConnectionCount, p.ConnectionCount)
+		batch.ConnectionMedianLatencyMS = append(batch.ConnectionMedianLatencyMS, p.ConnectionMedianLatencyMS)
+		batch.RxBytes = append(batch.RxBytes, p.RxBytes)
+		batch.RxPackets = append(batch.RxPackets, p.RxPackets)
+		batch.TxBytes = append(batch.TxBytes, p.TxBytes)
+		batch.TxPackets = append(batch.TxPackets, p.TxPackets)
+		batch.SessionCountJetBrains = append(batch.SessionCountJetBrains, p.SessionCountJetBrains)
+		batch.SessionCountReconnectingPTY = append(batch.SessionCountReconnectingPTY, p.SessionCountReconnectingPTY)
+		batch.SessionCountSSH = append(batch.SessionCountSSH, p.SessionCountSSH)
+		batch.SessionCountVSCode = append(batch.SessionCountVSCode, p.SessionCountVSCode)
+		rawMessages = append(rawMessages, p.ConnectionsByProto)
 	}
 
-	err = b.store.InsertWorkspaceAgentStats(ctx, *b.buf)
+	// Join the raw message into a single array
+	var buf bytes.Buffer
+	_, _ = buf.WriteRune('[')
+	_, _ = buf.Write(bytes.Join(rawMessages, []byte{','}))
+	_, _ = buf.WriteRune(']')
+	batch.ConnectionsByProto = buf.Bytes()
+
+	// marshal connections by proto
+	err := b.store.InsertWorkspaceAgentStats(ctx, batch)
 	elapsed := time.Since(start)
 	if err != nil {
 		b.log.Error(ctx, "error inserting workspace agent stats", slog.Error(err), slog.F("elapsed", elapsed))
 		return
 	}
-
-	b.resetBuf()
-}
-
-// initBuf resets the buffer. b MUST be locked.
-func (b *Batcher) initBuf(size int) {
-	b.buf = &database.InsertWorkspaceAgentStatsParams{
-		ID:                          make([]uuid.UUID, 0, b.batchSize),
-		CreatedAt:                   make([]time.Time, 0, b.batchSize),
-		UserID:                      make([]uuid.UUID, 0, b.batchSize),
-		WorkspaceID:                 make([]uuid.UUID, 0, b.batchSize),
-		TemplateID:                  make([]uuid.UUID, 0, b.batchSize),
-		AgentID:                     make([]uuid.UUID, 0, b.batchSize),
-		ConnectionsByProto:          json.RawMessage("[]"),
-		ConnectionCount:             make([]int64, 0, b.batchSize),
-		RxPackets:                   make([]int64, 0, b.batchSize),
-		RxBytes:                     make([]int64, 0, b.batchSize),
-		TxPackets:                   make([]int64, 0, b.batchSize),
-		TxBytes:                     make([]int64, 0, b.batchSize),
-		SessionCountVSCode:          make([]int64, 0, b.batchSize),
-		SessionCountJetBrains:       make([]int64, 0, b.batchSize),
-		SessionCountReconnectingPTY: make([]int64, 0, b.batchSize),
-		SessionCountSSH:             make([]int64, 0, b.batchSize),
-		ConnectionMedianLatencyMS:   make([]float64, 0, b.batchSize),
-	}
-
-	b.connectionsByProto = make([]map[string]int64, 0, size)
-}
-
-func (b *Batcher) resetBuf() {
-	b.buf.ID = b.buf.ID[:0]
-	b.buf.CreatedAt = b.buf.CreatedAt[:0]
-	b.buf.UserID = b.buf.UserID[:0]
-	b.buf.WorkspaceID = b.buf.WorkspaceID[:0]
-	b.buf.TemplateID = b.buf.TemplateID[:0]
-	b.buf.AgentID = b.buf.AgentID[:0]
-	b.buf.ConnectionsByProto = json.RawMessage(`[]`)
-	b.buf.ConnectionCount = b.buf.ConnectionCount[:0]
-	b.buf.RxPackets = b.buf.RxPackets[:0]
-	b.buf.RxBytes = b.buf.RxBytes[:0]
-	b.buf.TxPackets = b.buf.TxPackets[:0]
-	b.buf.TxBytes = b.buf.TxBytes[:0]
-	b.buf.SessionCountVSCode = b.buf.SessionCountVSCode[:0]
-	b.buf.SessionCountJetBrains = b.buf.SessionCountJetBrains[:0]
-	b.buf.SessionCountReconnectingPTY = b.buf.SessionCountReconnectingPTY[:0]
-	b.buf.SessionCountSSH = b.buf.SessionCountSSH[:0]
-	b.buf.ConnectionMedianLatencyMS = b.buf.ConnectionMedianLatencyMS[:0]
-	b.connectionsByProto = b.connectionsByProto[:0]
 }

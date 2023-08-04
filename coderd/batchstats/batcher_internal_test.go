@@ -122,9 +122,6 @@ func TestBatchStats(t *testing.T) {
 	stats, err = store.GetWorkspaceAgentStats(ctx, t5)
 	require.NoError(t, err, "should not error getting stats")
 	require.Len(t, stats, 0, "should have no stats for workspace")
-
-	// Ensure that buf never grew beyond what we expect
-	require.Equal(t, defaultBufferSize, cap(b.buf.ID), "buffer grew beyond expected capacity")
 }
 
 // randAgentSDKStats returns a random agentsdk.Stats
