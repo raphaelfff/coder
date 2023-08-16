@@ -6,17 +6,17 @@
     "incremental": true,
     "isolatedModules": true,
     "jsx": "react-jsx",
-    "lib": ["dom", "dom.iterable", "esnext"],
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "lib": ["ESNext"],
+    "module": "ESNext",
+    "moduleResolution": "NodeNext",
     "outDir": "./dist/",
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "strict": true,
-    "target": "es2020",
-    "baseUrl": "./src"
+    "target": "ESNext",
+    "baseUrl": "./src",
+    "types": ["bun-types"]
   },
   "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["node_modules", "_jest"],
-  "types": ["node", "jest", "@testing-library/jest-dom"]
+  "exclude": ["node_modules", "_jest"]
 }
