@@ -1905,6 +1905,7 @@ type Workspace struct {
 	LastUsedAt        time.Time      `db:"last_used_at" json:"last_used_at"`
 	LockedAt          sql.NullTime   `db:"locked_at" json:"locked_at"`
 	DeletingAt        sql.NullTime   `db:"deleting_at" json:"deleting_at"`
+	Icon              string         `db:"icon" json:"icon"`
 }
 
 type WorkspaceAgent struct {

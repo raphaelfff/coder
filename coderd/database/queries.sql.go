@@ -9126,7 +9126,7 @@ func (q *sqlQuerier) GetDeploymentWorkspaceStats(ctx context.Context) (GetDeploy
 
 const getWorkspaceByAgentID = `-- name: GetWorkspaceByAgentID :one
 SELECT
-	id, created_at, updated_at, owner_id, organization_id, template_id, deleted, name, autostart_schedule, ttl, last_used_at, locked_at, deleting_at
+	id, created_at, updated_at, owner_id, organization_id, template_id, deleted, name, autostart_schedule, ttl, last_used_at, locked_at, deleting_at, icon
 FROM
 	workspaces
 WHERE
@@ -9171,13 +9171,14 @@ func (q *sqlQuerier) GetWorkspaceByAgentID(ctx context.Context, agentID uuid.UUI
 		&i.LastUsedAt,
 		&i.LockedAt,
 		&i.DeletingAt,
+		&i.Icon,
 	)
 	return i, err
 }
 
 const getWorkspaceByID = `-- name: GetWorkspaceByID :one
 SELECT
-	id, created_at, updated_at, owner_id, organization_id, template_id, deleted, name, autostart_schedule, ttl, last_used_at, locked_at, deleting_at
+	id, created_at, updated_at, owner_id, organization_id, template_id, deleted, name, autostart_schedule, ttl, last_used_at, locked_at, deleting_at, icon
 FROM
 	workspaces
 WHERE
@@ -9203,13 +9204,14 @@ func (q *sqlQuerier) GetWorkspaceByID(ctx context.Context, id uuid.UUID) (Worksp
 		&i.LastUsedAt,
 		&i.LockedAt,
 		&i.DeletingAt,
+		&i.Icon,
 	)
 	return i, err
 }
 
 const getWorkspaceByOwnerIDAndName = `-- name: GetWorkspaceByOwnerIDAndName :one
 SELECT
-	id, created_at, updated_at, owner_id, organization_id, template_id, deleted, name, autostart_schedule, ttl, last_used_at, locked_at, deleting_at
+	id, created_at, updated_at, owner_id, organization_id, template_id, deleted, name, autostart_schedule, ttl, last_used_at, locked_at, deleting_at, icon
 FROM
 	workspaces
 WHERE
@@ -9242,13 +9244,14 @@ func (q *sqlQuerier) GetWorkspaceByOwnerIDAndName(ctx context.Context, arg GetWo
 		&i.LastUsedAt,
 		&i.LockedAt,
 		&i.DeletingAt,
+		&i.Icon,
 	)
 	return i, err
 }
 
 const getWorkspaceByWorkspaceAppID = `-- name: GetWorkspaceByWorkspaceAppID :one
 SELECT
-	id, created_at, updated_at, owner_id, organization_id, template_id, deleted, name, autostart_schedule, ttl, last_used_at, locked_at, deleting_at
+	id, created_at, updated_at, owner_id, organization_id, template_id, deleted, name, autostart_schedule, ttl, last_used_at, locked_at, deleting_at, icon
 FROM
 	workspaces
 WHERE
@@ -9300,13 +9303,14 @@ func (q *sqlQuerier) GetWorkspaceByWorkspaceAppID(ctx context.Context, workspace
 		&i.LastUsedAt,
 		&i.LockedAt,
 		&i.DeletingAt,
+		&i.Icon,
 	)
 	return i, err
 }
 
 const getWorkspaces = `-- name: GetWorkspaces :many
 SELECT
-	workspaces.id, workspaces.created_at, workspaces.updated_at, workspaces.owner_id, workspaces.organization_id, workspaces.template_id, workspaces.deleted, workspaces.name, workspaces.autostart_schedule, workspaces.ttl, workspaces.last_used_at, workspaces.locked_at, workspaces.deleting_at,
+	workspaces.id, workspaces.created_at, workspaces.updated_at, workspaces.owner_id, workspaces.organization_id, workspaces.template_id, workspaces.deleted, workspaces.name, workspaces.autostart_schedule, workspaces.ttl, workspaces.last_used_at, workspaces.locked_at, workspaces.deleting_at, workspaces.icon,
 	COALESCE(template_name.template_name, 'unknown') as template_name,
 	latest_build.template_version_id,
 	latest_build.template_version_name,
@@ -9545,6 +9549,7 @@ type GetWorkspacesRow struct {
 	LastUsedAt          time.Time      `db:"last_used_at" json:"last_used_at"`
 	LockedAt            sql.NullTime   `db:"locked_at" json:"locked_at"`
 	DeletingAt          sql.NullTime   `db:"deleting_at" json:"deleting_at"`
+	Icon                string         `db:"icon" json:"icon"`
 	TemplateName        string         `db:"template_name" json:"template_name"`
 	TemplateVersionID   uuid.UUID      `db:"template_version_id" json:"template_version_id"`
 	TemplateVersionName sql.NullString `db:"template_version_name" json:"template_version_name"`
@@ -9587,6 +9592,7 @@ func (q *sqlQuerier) GetWorkspaces(ctx context.Context, arg GetWorkspacesParams)
 			&i.LastUsedAt,
 			&i.LockedAt,
 			&i.DeletingAt,
+			&i.Icon,
 			&i.TemplateName,
 			&i.TemplateVersionID,
 			&i.TemplateVersionName,
@@ -9607,7 +9613,7 @@ func (q *sqlQuerier) GetWorkspaces(ctx context.Context, arg GetWorkspacesParams)
 
 const getWorkspacesEligibleForTransition = `-- name: GetWorkspacesEligibleForTransition :many
 SELECT
-	workspaces.id, workspaces.created_at, workspaces.updated_at, workspaces.owner_id, workspaces.organization_id, workspaces.template_id, workspaces.deleted, workspaces.name, workspaces.autostart_schedule, workspaces.ttl, workspaces.last_used_at, workspaces.locked_at, workspaces.deleting_at
+	workspaces.id, workspaces.created_at, workspaces.updated_at, workspaces.owner_id, workspaces.organization_id, workspaces.template_id, workspaces.deleted, workspaces.name, workspaces.autostart_schedule, workspaces.ttl, workspaces.last_used_at, workspaces.locked_at, workspaces.deleting_at, workspaces.icon
 FROM
 	workspaces
 LEFT JOIN
@@ -9694,6 +9700,7 @@ func (q *sqlQuerier) GetWorkspacesEligibleForTransition(ctx context.Context, now
 			&i.LastUsedAt,
 			&i.LockedAt,
 			&i.DeletingAt,
+			&i.Icon,
 		); err != nil {
 			return nil, err
 		}
@@ -9723,7 +9730,7 @@ INSERT INTO
 		last_used_at
 	)
 VALUES
-	($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, created_at, updated_at, owner_id, organization_id, template_id, deleted, name, autostart_schedule, ttl, last_used_at, locked_at, deleting_at
+	($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id, created_at, updated_at, owner_id, organization_id, template_id, deleted, name, autostart_schedule, ttl, last_used_at, locked_at, deleting_at, icon
 `
 
 type InsertWorkspaceParams struct {
@@ -9767,6 +9774,7 @@ func (q *sqlQuerier) InsertWorkspace(ctx context.Context, arg InsertWorkspacePar
 		&i.LastUsedAt,
 		&i.LockedAt,
 		&i.DeletingAt,
+		&i.Icon,
 	)
 	return i, err
 }
@@ -9779,7 +9787,7 @@ SET
 WHERE
 	id = $1
 	AND deleted = false
-RETURNING id, created_at, updated_at, owner_id, organization_id, template_id, deleted, name, autostart_schedule, ttl, last_used_at, locked_at, deleting_at
+RETURNING id, created_at, updated_at, owner_id, organization_id, template_id, deleted, name, autostart_schedule, ttl, last_used_at, locked_at, deleting_at, icon
 `
 
 type UpdateWorkspaceParams struct {
@@ -9804,6 +9812,7 @@ func (q *sqlQuerier) UpdateWorkspace(ctx context.Context, arg UpdateWorkspacePar
 		&i.LastUsedAt,
 		&i.LockedAt,
 		&i.DeletingAt,
+		&i.Icon,
 	)
 	return i, err
 }
@@ -9882,7 +9891,7 @@ WHERE
 	workspaces.template_id = templates.id
 AND
 	workspaces.id = $1
-RETURNING workspaces.id, workspaces.created_at, workspaces.updated_at, workspaces.owner_id, workspaces.organization_id, workspaces.template_id, workspaces.deleted, workspaces.name, workspaces.autostart_schedule, workspaces.ttl, workspaces.last_used_at, workspaces.locked_at, workspaces.deleting_at
+RETURNING workspaces.id, workspaces.created_at, workspaces.updated_at, workspaces.owner_id, workspaces.organization_id, workspaces.template_id, workspaces.deleted, workspaces.name, workspaces.autostart_schedule, workspaces.ttl, workspaces.last_used_at, workspaces.locked_at, workspaces.deleting_at, workspaces.icon
 `
 
 type UpdateWorkspaceLockedDeletingAtParams struct {
@@ -9907,6 +9916,7 @@ func (q *sqlQuerier) UpdateWorkspaceLockedDeletingAt(ctx context.Context, arg Up
 		&i.LastUsedAt,
 		&i.LockedAt,
 		&i.DeletingAt,
+		&i.Icon,
 	)
 	return i, err
 }

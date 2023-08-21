@@ -124,6 +124,7 @@ var auditableResourcesTypes = map[any]map[string]Action{
 		"template_id":        ActionTrack,
 		"deleted":            ActionIgnore, // Changes, but is implicit when a delete event is fired.
 		"name":               ActionTrack,
+		"icon":               ActionTrack,
 		"autostart_schedule": ActionTrack,
 		"ttl":                ActionTrack,
 		"last_used_at":       ActionIgnore,
