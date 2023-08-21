@@ -17,7 +17,7 @@
         # to update the lock file if packages are out-of-date.
 
         # From https://nixos.wiki/wiki/Google_Cloud_SDK
-        gdk = pkgs.google-cloud-sdk.withExtraComponents ([pkgs.google-cloud-sdk.components.gke-gcloud-auth-plugin]);
+        gdk = pkgs.google-cloud-sdk.withExtraComponents ([ pkgs.google-cloud-sdk.components.gke-gcloud-auth-plugin ]);
 
         devShellPackages = with pkgs; [
           bat
@@ -88,12 +88,16 @@
           screen
         ];
 
+        nixpkgsTar = builtins.fetchTarball {
+          url = "https://nixos.org/channels/nixpkgs-unstable/nixexprs.tar.xz";
+          sha256 = "sha256:0bwgr2jhc4rsj7bcyp5ya7jx1ymy59bxzbgrx7accfyg4q9v2w8h";
+        };
         # This is the base image for our Docker container used for development.
         # Use `nix-prefetch-docker ubuntu --arch amd64 --image-tag lunar` to get this.
         baseDevEnvImage = pkgs.dockerTools.pullImage {
           imageName = "ubuntu";
           imageDigest = "sha256:7a520eeb6c18bc6d32a21bb7edcf673a7830813c169645d51c949cecb62387d0";
-          sha256 = "ajZzFSG/q7F5wAXfBOPpYBT+aVy8lqAXtBzkmAe2SeE=";
+          sha256 = "090zricz7n1kbphd7gwhvavj7m1j7bhh4aq3c3mrik5q8pxh4j58";
           finalImageName = "ubuntu";
           finalImageTag = "lunar";
         };
@@ -114,6 +118,10 @@
               --uid=1000 \
               --user-group \
               --groups docker
+            groupadd -r nixbld
+            for n in $(seq 1 10); do useradd -c "Nix build user $n" \
+              -d /var/empty -g nixbld -G nixbld -M -N -r -s "$(which nologin)" \
+              nixbld$n; done
             cp ${pkgs.sudo}/bin/sudo usr/bin/sudo
             chmod 4755 usr/bin/sudo
             mkdir -p /etc/init.d
@@ -223,6 +231,7 @@
           extraCommands = ''
             mkdir -p usr/lib/locale
             cp -a ${pkgs.glibcLocales}/lib/locale/locale-archive usr/lib/locale/locale-archive
+            ln -s ${nixpkgsTar} nixpkgs
           '';
 
           config = {
