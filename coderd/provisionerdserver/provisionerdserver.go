@@ -11,7 +11,6 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -43,11 +42,6 @@ import (
 	sdkproto "github.com/coder/coder/v2/provisionersdk/proto"
 )
 
-var (
-	lastAcquire      time.Time
-	lastAcquireMutex sync.RWMutex
-)
-
 type Options struct {
 	OIDCConfig     httpmw.OAuth2Config
 	GitAuthConfigs []*gitauth.Config
@@ -72,8 +66,8 @@ type server struct {
 	UserQuietHoursScheduleStore *atomic.Pointer[schedule.UserQuietHoursScheduleStore]
 	DeploymentValues            *codersdk.DeploymentValues
 
-	AcquireJobDebounce time.Duration
-	OIDCConfig         httpmw.OAuth2Config
+	Debouncer  *Debouncer
+	OIDCConfig httpmw.OAuth2Config
 
 	TimeNowFn func() time.Time
 }
@@ -93,7 +87,7 @@ func NewServer(
 	templateScheduleStore *atomic.Pointer[schedule.TemplateScheduleStore],
 	userQuietHoursScheduleStore *atomic.Pointer[schedule.UserQuietHoursScheduleStore],
 	deploymentValues *codersdk.DeploymentValues,
-	acquireJobDebounce time.Duration,
+	debouncer *Debouncer,
 	options Options,
 ) (proto.DRPCProvisionerDaemonServer, error) {
 	// Panic early if pointers are nil
@@ -112,6 +106,9 @@ func NewServer(
 	if deploymentValues == nil {
 		return nil, xerrors.New("deploymentValues is nil")
 	}
+	if debouncer == nil {
+		return nil, xerrors.New("debouncer is nil")
+	}
 	return &server{
 		AccessURL:                   accessURL,
 		ID:                          id,
@@ -128,7 +125,7 @@ func NewServer(
 		TemplateScheduleStore:       templateScheduleStore,
 		UserQuietHoursScheduleStore: userQuietHoursScheduleStore,
 		DeploymentValues:            deploymentValues,
-		AcquireJobDebounce:          acquireJobDebounce,
+		Debouncer:                   debouncer,
 		OIDCConfig:                  options.OIDCConfig,
 		TimeNowFn:                   options.TimeNowFn,
 	}, nil
@@ -152,13 +149,10 @@ func (s *server) AcquireJob(ctx context.Context, _ *proto.Empty) (*proto.Acquire
 	//
 	// The debounce only occurs when no job is returned, so if loads of
 	// jobs are added at once, they will start after at most this duration.
-	lastAcquireMutex.RLock()
-	if !lastAcquire.IsZero() && time.Since(lastAcquire) < s.AcquireJobDebounce {
-		s.Logger.Debug(ctx, "debounce acquire job", slog.F("debounce", s.AcquireJobDebounce), slog.F("last_acquire", lastAcquire))
-		lastAcquireMutex.RUnlock()
+	if s.Debouncer.Debounce() {
+		s.Logger.Debug(ctx, "debounce acquire job")
 		return &proto.AcquiredJob{}, nil
 	}
-	lastAcquireMutex.RUnlock()
 	// This marks the job as locked in the database.
 	job, err := s.Database.AcquireProvisionerJob(ctx, database.AcquireProvisionerJobParams{
 		StartedAt: sql.NullTime{
@@ -175,9 +169,7 @@ func (s *server) AcquireJob(ctx context.Context, _ *proto.Empty) (*proto.Acquire
 	if errors.Is(err, sql.ErrNoRows) {
 		// The provisioner daemon assumes no jobs are available if
 		// an empty struct is returned.
-		lastAcquireMutex.Lock()
-		lastAcquire = database.Now()
-		lastAcquireMutex.Unlock()
+		s.Debouncer.Signal()
 		return &proto.AcquiredJob{}, nil
 	}
 	if err != nil {

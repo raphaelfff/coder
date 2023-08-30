@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/hashicorp/yamux"
@@ -260,7 +259,7 @@ func (api *API) provisionerDaemonServe(rw http.ResponseWriter, r *http.Request) 
 		api.AGPL.UserQuietHoursScheduleStore,
 		api.DeploymentValues,
 		// TODO(spikecurtis) - fix debounce to not cause flaky tests.
-		time.Duration(0),
+		api.Debouncer,
 		provisionerdserver.Options{
 			GitAuthConfigs: api.GitAuthConfigs,
 			OIDCConfig:     api.OIDCConfig,

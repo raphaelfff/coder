@@ -76,7 +76,7 @@ func TestAcquireJob(t *testing.T) {
 			testTemplateScheduleStore(),
 			testUserQuietHoursScheduleStore(),
 			&codersdk.DeploymentValues{},
-			time.Hour,
+			provisionerdserver.NewDebouncer(time.Hour),
 			provisionerdserver.Options{},
 		)
 		require.NoError(t, err)
@@ -1658,7 +1658,7 @@ func setup(t *testing.T, ignoreLogErrors bool, ov *overrides) (proto.DRPCProvisi
 		uqhss,
 		deploymentValues,
 		// Negative values cause the debounce to never kick in.
-		-time.Minute,
+		provisionerdserver.NewDebouncer(-time.Minute),
 		provisionerdserver.Options{
 			GitAuthConfigs: gitAuthConfigs,
 			TimeNowFn:      timeNowFn,

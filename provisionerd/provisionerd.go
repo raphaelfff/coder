@@ -52,7 +52,6 @@ type Options struct {
 	LogBufferInterval   time.Duration
 	JobPollInterval     time.Duration
 	JobPollJitter       time.Duration
-	JobPollDebounce     time.Duration
 	Provisioners        Provisioners
 }
 
@@ -280,11 +279,6 @@ func (p *Server) isRunningJob() bool {
 	}
 }
 
-var (
-	lastAcquire      time.Time
-	lastAcquireMutex sync.RWMutex
-)
-
 // Locks a job in the database, and runs it!
 func (p *Server) acquireJob(ctx context.Context) {
 	p.mutex.Lock()
@@ -299,19 +293,6 @@ func (p *Server) acquireJob(ctx context.Context) {
 		p.opts.Logger.Debug(context.Background(), "skipping acquire; provisionerd is shutting down")
 		return
 	}
-
-	// This prevents loads of provisioner daemons from consistently sending
-	// requests when no jobs are available.
-	//
-	// The debounce only occurs when no job is returned, so if loads of jobs are
-	// added at once, they will start after at most this duration.
-	lastAcquireMutex.RLock()
-	if !lastAcquire.IsZero() && time.Since(lastAcquire) < p.opts.JobPollDebounce {
-		lastAcquireMutex.RUnlock()
-		p.opts.Logger.Debug(ctx, "debounce acquire job")
-		return
-	}
-	lastAcquireMutex.RUnlock()
 
 	var err error
 	client, ok := p.client()
@@ -332,9 +313,6 @@ func (p *Server) acquireJob(ctx context.Context) {
 		return
 	}
 	if job.JobId == "" {
-		lastAcquireMutex.Lock()
-		lastAcquire = time.Now()
-		lastAcquireMutex.Unlock()
 		return
 	}
 

@@ -1375,16 +1375,14 @@ func newProvisionerDaemon(
 		provisioners[string(database.ProvisionerTypeTerraform)] = sdkproto.NewDRPCProvisionerClient(terraformClient)
 	}
 
-	debounce := time.Second
 	return provisionerd.New(func(ctx context.Context) (proto.DRPCProvisionerDaemonClient, error) {
 		// This debounces calls to listen every second. Read the comment
 		// in provisionerdserver.go to learn more!
-		return coderAPI.CreateInMemoryProvisionerDaemon(ctx, debounce)
+		return coderAPI.CreateInMemoryProvisionerDaemon(ctx, coderAPI.Debouncer)
 	}, &provisionerd.Options{
 		Logger:              logger.Named("provisionerd"),
 		JobPollInterval:     cfg.Provisioner.DaemonPollInterval.Value(),
 		JobPollJitter:       cfg.Provisioner.DaemonPollJitter.Value(),
-		JobPollDebounce:     debounce,
 		UpdateInterval:      time.Second,
 		ForceCancelInterval: cfg.Provisioner.ForceCancelInterval.Value(),
 		Provisioners:        provisioners,

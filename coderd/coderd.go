@@ -164,6 +164,8 @@ type Options struct {
 	StatsBatcher       *batchstats.Batcher
 
 	WorkspaceAppsStatsCollectorOptions workspaceapps.StatsCollectorOptions
+
+	Debouncer *provisionerdserver.Debouncer
 }
 
 // @title Coder API
@@ -294,6 +296,9 @@ func New(options *Options) *API {
 
 	if options.StatsBatcher == nil {
 		panic("developer error: options.StatsBatcher is nil")
+	}
+	if options.Debouncer == nil {
+		options.Debouncer = provisionerdserver.NewDebouncer(time.Second)
 	}
 
 	siteCacheDir := options.CacheDir
@@ -1067,7 +1072,7 @@ func compressHandler(h http.Handler) http.Handler {
 
 // CreateInMemoryProvisionerDaemon is an in-memory connection to a provisionerd.
 // Useful when starting coderd and provisionerd in the same process.
-func (api *API) CreateInMemoryProvisionerDaemon(ctx context.Context, debounce time.Duration) (client proto.DRPCProvisionerDaemonClient, err error) {
+func (api *API) CreateInMemoryProvisionerDaemon(ctx context.Context, debouncer *provisionerdserver.Debouncer) (client proto.DRPCProvisionerDaemonClient, err error) {
 	tracer := api.TracerProvider.Tracer(tracing.TracerName)
 	clientSession, serverSession := provisionersdk.MemTransportPipe()
 	defer func() {
@@ -1113,7 +1118,7 @@ func (api *API) CreateInMemoryProvisionerDaemon(ctx context.Context, debounce ti
 		api.TemplateScheduleStore,
 		api.UserQuietHoursScheduleStore,
 		api.DeploymentValues,
-		debounce,
+		debouncer,
 		provisionerdserver.Options{
 			OIDCConfig:     api.OIDCConfig,
 			GitAuthConfigs: api.GitAuthConfigs,
