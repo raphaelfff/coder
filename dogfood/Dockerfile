@@ -330,6 +330,9 @@ COPY --from=rust-utils /tmp/bin /usr/local/bin
 COPY --from=proto /tmp/bin /usr/local/bin
 COPY --from=proto /tmp/include /usr/local/bin/include
 
+# Unminmize the image
+RUN yes | unminimize
+
 USER coder
 
 # Ensure go bins are in the 'coder' user's path. Note that no go bins are
