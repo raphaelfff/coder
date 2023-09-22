@@ -1046,9 +1046,10 @@ func (r *RootCmd) scaletestWorkspaceTraffic() *clibase.Cmd {
 
 func (r *RootCmd) scaletestDashboard() *clibase.Cmd {
 	var (
-		count   int64
-		minWait time.Duration
-		maxWait time.Duration
+		count    int64
+		minWait  time.Duration
+		maxWait  time.Duration
+		headless bool
 
 		client          = &codersdk.Client{}
 		tracingFlags    = &scaletestTracingFlags{}
@@ -1102,6 +1103,7 @@ func (r *RootCmd) scaletestDashboard() *clibase.Cmd {
 					Trace:     tracingEnabled,
 					Logger:    logger.Named(name),
 					RollTable: dashboard.DefaultActions,
+					Headless:  headless,
 				}
 				if err := config.Validate(); err != nil {
 					return err
@@ -1162,6 +1164,13 @@ func (r *RootCmd) scaletestDashboard() *clibase.Cmd {
 			Default:     "1s",
 			Description: "Maximum wait between fetches.",
 			Value:       clibase.DurationOf(&maxWait),
+		},
+		{
+			Flag:        "headless",
+			Env:         "CODER_SCALETEST_DASHBOARD_HEADLESS",
+			Default:     "true",
+			Description: "Controls headless mode. Setting to false is useful for debugging.",
+			Value:       clibase.BoolOf(&headless),
 		},
 	}
 

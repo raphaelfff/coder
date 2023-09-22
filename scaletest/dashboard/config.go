@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"github.com/google/uuid"
 	"time"
 
 	"golang.org/x/xerrors"
@@ -19,6 +20,10 @@ type Config struct {
 	Logger slog.Logger `json:"-"`
 	// RollTable is the set of actions to perform
 	RollTable RollTable `json:"roll_table"`
+	// Headless controls headless mode for chromedp.
+	Headless bool `json:"no_headless"`
+	// UserID is the user as which to run the test
+	UserID uuid.UUID `json:"user_id"`
 }
 
 func (c Config) Validate() error {
@@ -32,6 +37,10 @@ func (c Config) Validate() error {
 
 	if c.MinWait > c.MaxWait {
 		return xerrors.Errorf("validate duration_min: must be less than duration_max")
+	}
+
+	if c.UserID == uuid.Nil {
+		return xerrors.Errorf("validate user_id: must not be nil")
 	}
 
 	return nil

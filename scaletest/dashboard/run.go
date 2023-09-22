@@ -49,9 +49,10 @@ func (r *Runner) Run(ctx context.Context, _ string, _ io.Writer) error {
 	}
 
 	p := &Params{
-		client: r.client,
-		me:     me,
-		c:      c,
+		client:   r.client,
+		me:       me,
+		c:        c,
+		headless: r.cfg.Headless,
 	}
 	rolls := make(chan int)
 	go func() {
@@ -126,6 +127,12 @@ func (r *Runner) do(ctx context.Context, act RollTableEntry, p *Params) {
 
 func (r *Runner) randWait() time.Duration {
 	// nolint:gosec // This is not for cryptographic purposes. Chill, gosec. Chill.
-	wait := time.Duration(rand.Intn(int(r.cfg.MaxWait) - int(r.cfg.MinWait)))
+	var wait time.Duration
+	if r.cfg.MaxWait <= r.cfg.MinWait {
+		wait = 0
+	} else {
+		wait = time.Duration(rand.Intn(int(r.cfg.MaxWait) - int(r.cfg.MinWait)))
+	}
+
 	return r.cfg.MinWait + wait
 }

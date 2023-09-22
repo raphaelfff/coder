@@ -1,9 +1,16 @@
 package dashboard
 
 import (
+	"cdr.dev/slog"
 	"context"
-
+	"fmt"
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/chromedp"
 	"github.com/google/uuid"
+	"golang.org/x/xerrors"
+	"os"
+	"time"
 
 	"github.com/coder/coder/v2/codersdk"
 )
@@ -13,24 +20,25 @@ import (
 // Note that the order of the table is important!
 // Entries must be in ascending order.
 var DefaultActions RollTable = []RollTableEntry{
-	{0, fetchWorkspaces, "fetch workspaces"},
-	{1, fetchUsers, "fetch users"},
-	{2, fetchTemplates, "fetch templates"},
-	{3, authCheckAsOwner, "authcheck owner"},
-	{4, authCheckAsNonOwner, "authcheck not owner"},
-	{5, fetchAuditLog, "fetch audit log"},
-	{6, fetchActiveUsers, "fetch active users"},
-	{7, fetchSuspendedUsers, "fetch suspended users"},
-	{8, fetchTemplateVersion, "fetch template version"},
-	{9, fetchWorkspace, "fetch workspace"},
-	{10, fetchTemplate, "fetch template"},
-	{11, fetchUserByID, "fetch user by ID"},
-	{12, fetchUserByUsername, "fetch user by username"},
-	{13, fetchWorkspaceBuild, "fetch workspace build"},
-	{14, fetchDeploymentConfig, "fetch deployment config"},
-	{15, fetchWorkspaceQuotaForUser, "fetch workspace quota for user"},
-	{16, fetchDeploymentStats, "fetch deployment stats"},
-	{17, fetchWorkspaceLogs, "fetch workspace logs"},
+	{0, loadMainPage, "load main page"},
+	//{0, fetchWorkspaces, "fetch workspaces"},
+	//{1, fetchUsers, "fetch users"},
+	//{2, fetchTemplates, "fetch templates"},
+	//{3, authCheckAsOwner, "authcheck owner"},
+	//{4, authCheckAsNonOwner, "authcheck not owner"},
+	//{5, fetchAuditLog, "fetch audit log"},
+	//{6, fetchActiveUsers, "fetch active users"},
+	//{7, fetchSuspendedUsers, "fetch suspended users"},
+	//{8, fetchTemplateVersion, "fetch template version"},
+	//{9, fetchWorkspace, "fetch workspace"},
+	//{10, fetchTemplate, "fetch template"},
+	//{11, fetchUserByID, "fetch user by ID"},
+	//{12, fetchUserByUsername, "fetch user by username"},
+	//{13, fetchWorkspaceBuild, "fetch workspace build"},
+	//{14, fetchDeploymentConfig, "fetch deployment config"},
+	//{15, fetchWorkspaceQuotaForUser, "fetch workspace quota for user"},
+	//{16, fetchDeploymentStats, "fetch deployment stats"},
+	//{17, fetchWorkspaceLogs, "fetch workspace logs"},
 }
 
 // RollTable is a slice of rollTableEntry.
@@ -72,7 +80,69 @@ type Params struct {
 	// present. We store them in a cache to avoid fetching them every time.
 	// This may seem counter-intuitive for load testing, but we want to avoid
 	// muddying results.
-	c *cache
+	c        *cache
+	log      slog.Logger
+	headless bool
+}
+
+func logAdapter(ctx context.Context, log func(ctx context.Context, msg string, fields ...any)) func(string, ...interface{}) {
+	return func(msg string, args ...interface{}) {
+		log(ctx, msg, slog.F("args", fmt.Sprintf("%+v", args...)))
+	}
+}
+
+func loadMainPage(ctx context.Context, p *Params) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	dir, err := os.MkdirTemp("", "scaletest-dashboard")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := os.RemoveAll(dir); err != nil {
+			p.log.Error(ctx, "remove temp dir", slog.Error(err))
+		}
+	}()
+
+	allocOpts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.UserDataDir(dir),
+		chromedp.DisableGPU,
+		chromedp.NoDefaultBrowserCheck,
+		chromedp.NoFirstRun,
+	)
+
+	//if !p.headless { // headless is the default
+	allocOpts = append(allocOpts, chromedp.Flag("headless", "false"))
+	//}
+
+	allocCtx, allocCtxCancel := chromedp.NewExecAllocator(ctx, allocOpts...)
+	defer allocCtxCancel()
+
+	cdpCtx, cdpCancel := chromedp.NewContext(allocCtx, chromedp.WithDebugf(logAdapter(ctx, p.log.Debug)))
+	defer cdpCancel()
+	err = chromedp.Run(cdpCtx, chromedp.Tasks{
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			exp := cdp.TimeSinceEpoch(time.Now().Add(time.Hour))
+			if err := network.SetCookie("coder_session_token", p.client.SessionToken()).
+				WithExpires(&exp).
+				WithDomain(p.client.URL.Host).
+				WithHTTPOnly(false).
+				Do(ctx); err != nil {
+				return xerrors.Errorf("set cookie: %w", err)
+			}
+			return nil
+		}),
+		chromedp.Navigate(p.client.URL.String()),
+		chromedp.WaitVisible(fmt.Sprintf(`div[title=%q]`, p.me.Username)),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			<-ctx.Done()
+			return nil
+		}),
+	})
+	if err != nil {
+		return xerrors.Errorf("run chromedp: %w", err)
+	}
+	return nil
 }
 
 // fetchWorkspaces fetches all workspaces.
