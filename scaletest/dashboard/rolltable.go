@@ -7,8 +7,7 @@ import (
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
-	"golang.org/x/xerrors"
-	"os"
+	"net/url"
 	"time"
 
 	"github.com/coder/coder/v2/codersdk"
@@ -19,7 +18,9 @@ import (
 // Note that the order of the table is important!
 // Entries must be in ascending order.
 var DefaultActions RollTable = []RollTableEntry{
-	{0, loadMainPage, "load main page"},
+	{0, visitHomepage, "visit home page"},
+	{1, visitFirstWorkspace, "visit first workspace"},
+	{2, visitWorkspaceBuildLog, "visit workspace build log"},
 }
 
 // RollTable is a slice of rollTableEntry.
@@ -53,68 +54,66 @@ func (r RollTable) max() int {
 
 // Params is a set of parameters to pass to the actions in a rollTable.
 type Params struct {
-	// client is the client to use for performing the action.
-	client *codersdk.Client
+	URL          *url.URL
+	SessionToken string
 	// me is the currently authenticated user. Lots of actions require this.
-	me       codersdk.User
-	log      slog.Logger
-	headless bool
+	me  codersdk.User
+	log slog.Logger
 }
 
-func logAdapter(ctx context.Context, log func(ctx context.Context, msg string, fields ...any)) func(string, ...interface{}) {
-	return func(msg string, args ...interface{}) {
-		log(ctx, msg, slog.F("args", fmt.Sprintf("%+v", args...)))
-	}
-}
-
-func loadMainPage(ctx context.Context, p *Params) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	dir, err := os.MkdirTemp("", "scaletest-dashboard")
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := os.RemoveAll(dir); err != nil {
-			p.log.Error(ctx, "remove temp dir", slog.Error(err))
-		}
-	}()
-
-	allocOpts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.UserDataDir(dir),
-		chromedp.DisableGPU,
-	)
-
-	if !p.headless { // headless is the default
-		allocOpts = append(allocOpts, chromedp.Flag("headless", false))
-	}
-
-	allocCtx, allocCtxCancel := chromedp.NewExecAllocator(ctx, allocOpts...)
-	defer allocCtxCancel()
-
-	cdpCtx, cdpCancel := chromedp.NewContext(allocCtx, chromedp.WithDebugf(logAdapter(ctx, p.log.Debug)))
-	defer cdpCancel()
-	err = chromedp.Run(cdpCtx, chromedp.Tasks{
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			exp := cdp.TimeSinceEpoch(time.Now().Add(time.Hour))
-			if err := network.SetCookie("coder_session_token", p.client.SessionToken()).
-				WithExpires(&exp).
-				WithDomain(p.client.URL.Host).
-				WithHTTPOnly(false).
-				Do(ctx); err != nil {
-				return xerrors.Errorf("set cookie: %w", err)
-			}
-			return nil
-		}),
-		chromedp.Navigate(p.client.URL.String()),
-		chromedp.WaitVisible(fmt.Sprintf(`div[title=%q]`, p.me.Username)),
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			<-ctx.Done()
-			return nil
-		}),
+func visitHomepage(ctx context.Context, p *Params) error {
+	l := withLog(p.log)
+	userAvatarSelector := fmt.Sprintf(`div[title=%q]`, p.me.Username)
+	return chromedp.Run(ctx, chromedp.Tasks{
+		l(setSessionTokenCookie(p.SessionToken, p.URL.Host), "set cookie"),
+		l(chromedp.Navigate(p.URL.String()), "visit homepage"),
+		l(chromedp.WaitVisible(userAvatarSelector), "wait for user avatar"),
 	})
-	if err != nil {
-		return xerrors.Errorf("run chromedp: %w", err)
+}
+
+func visitFirstWorkspace(ctx context.Context, p *Params) error {
+	l := withLog(p.log)
+	workspaceRowSelector := `table tr[tabindex]`
+	return chromedp.Run(ctx, chromedp.Tasks{
+		l(setSessionTokenCookie(p.SessionToken, p.URL.Host), "set cookie"),
+		l(chromedp.Navigate(p.URL.String()), "visit homepage"),
+		l(chromedp.Click(workspaceRowSelector, chromedp.NodeVisible), "click workspace row"),
+	})
+}
+
+func visitWorkspaceBuildLog(ctx context.Context, p *Params) error {
+	l := withLog(p.log)
+	workspaceRowSelector := `table tr[tabindex]`
+	workspaceBuildRowSelector := `table[data-testid="builds-table"] tr[role="button"]`
+	return chromedp.Run(ctx, chromedp.Tasks{
+		l(setSessionTokenCookie(p.SessionToken, p.URL.Host), "set cookie"),
+		l(chromedp.Navigate(p.URL.String()), "visit homepage"),
+		l(chromedp.Click(workspaceRowSelector, chromedp.NodeVisible), "click workspace row"),
+		l(chromedp.Click(workspaceBuildRowSelector, chromedp.NodeVisible), "click workspace build row"),
+	})
+}
+
+func setSessionTokenCookie(token, domain string) chromedp.Action {
+	exp := cdp.TimeSinceEpoch(time.Now().Add(30 * 24 * time.Hour))
+	return network.SetCookie("coder_session_token", token).
+		WithExpires(&exp).
+		WithDomain(domain).
+		WithHTTPOnly(false)
+}
+
+func withLog(log slog.Logger) func(act chromedp.Action, name string) chromedp.Action {
+	return func(act chromedp.Action, name string) chromedp.Action {
+		return chromedp.ActionFunc(func(ctx context.Context) error {
+			log.Debug(ctx, "start action", slog.F("name", name))
+			start := time.Now()
+			err := act.Do(ctx)
+			elapsed := time.Since(start)
+			if err != nil {
+				log.Error(ctx, "do action", slog.F("name", name), slog.Error(err), slog.F("elapsed", elapsed))
+				return err
+			}
+			log.Debug(ctx, "completed action", slog.F("name", name), slog.F("elapsed", elapsed))
+			return nil
+		})
 	}
-	return nil
 }

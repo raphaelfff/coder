@@ -1172,14 +1172,14 @@ func (r *RootCmd) scaletestDashboard() *clibase.Cmd {
 		{
 			Flag:        "min-wait",
 			Env:         "CODER_SCALETEST_DASHBOARD_MIN_WAIT",
-			Default:     "100ms",
+			Default:     "1s",
 			Description: "Minimum wait between fetches.",
 			Value:       clibase.DurationOf(&minWait),
 		},
 		{
 			Flag:        "max-wait",
 			Env:         "CODER_SCALETEST_DASHBOARD_MAX_WAIT",
-			Default:     "1s",
+			Default:     "10s",
 			Description: "Maximum wait between fetches.",
 			Value:       clibase.DurationOf(&maxWait),
 		},

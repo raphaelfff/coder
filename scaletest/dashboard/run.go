@@ -47,11 +47,15 @@ func (r *Runner) Run(ctx context.Context, _ string, _ io.Writer) error {
 		return xerrors.Errorf("user has no organizations")
 	}
 
+	cdpCtx, cdpCancel, err := initChromeDPCtx(ctx, r.cfg.Headless)
+	if err != nil {
+		return xerrors.Errorf("init chromedp ctx: %w", err)
+	}
+	defer cdpCancel()
 	p := &Params{
-		client: r.client,
-		me:     me,
-		//c:        c,
-		headless: r.cfg.Headless,
+		URL:          r.client.URL,
+		SessionToken: r.client.SessionToken(),
+		me:           me,
 	}
 	rolls := make(chan int)
 	go func() {
@@ -59,7 +63,7 @@ func (r *Runner) Run(ctx context.Context, _ string, _ io.Writer) error {
 		defer t.Stop()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-cdpCtx.Done():
 				return
 			case <-t.C:
 				rolls <- rand.Intn(r.cfg.RollTable.max() + 1) // nolint:gosec
@@ -70,11 +74,11 @@ func (r *Runner) Run(ctx context.Context, _ string, _ io.Writer) error {
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-cdpCtx.Done():
 			return nil
 		case n := <-rolls:
 			act := r.cfg.RollTable.choose(n)
-			go r.do(ctx, act, p)
+			r.do(cdpCtx, act, p)
 		}
 	}
 }
@@ -90,11 +94,9 @@ func (r *Runner) do(ctx context.Context, act RollTableEntry, p *Params) {
 		return
 	default:
 		var errored bool
-		cancelCtx, cancel := context.WithTimeout(ctx, r.cfg.MaxWait)
-		defer cancel()
 		start := time.Now()
-		err := act.Fn(cancelCtx, p)
-		cancel()
+		// Cancelling here would cause chromedp to exit, so we don't do that.
+		err := act.Fn(ctx, p)
 		elapsed := time.Since(start)
 		if err != nil {
 			errored = true
@@ -127,9 +129,7 @@ func (r *Runner) do(ctx context.Context, act RollTableEntry, p *Params) {
 func (r *Runner) randWait() time.Duration {
 	// nolint:gosec // This is not for cryptographic purposes. Chill, gosec. Chill.
 	var wait time.Duration
-	if r.cfg.MaxWait <= r.cfg.MinWait {
-		wait = r.cfg.MinWait
-	} else {
+	if r.cfg.MaxWait > r.cfg.MinWait {
 		wait = time.Duration(rand.Intn(int(r.cfg.MaxWait) - int(r.cfg.MinWait)))
 	}
 

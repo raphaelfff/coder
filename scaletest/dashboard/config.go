@@ -1,11 +1,10 @@
 package dashboard
 
 import (
+	"cdr.dev/slog"
 	"time"
 
 	"golang.org/x/xerrors"
-
-	"cdr.dev/slog"
 )
 
 type Config struct {
