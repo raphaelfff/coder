@@ -1095,8 +1095,25 @@ func (r *RootCmd) scaletestDashboard() *clibase.Cmd {
 
 			th := harness.NewTestHarness(strategy.toStrategy(), cleanupStrategy.toStrategy())
 
-			for i := int64(0); i < count; i++ {
-				name := fmt.Sprintf("dashboard-%d", i)
+			users, err := getScaletestUsers(ctx, client)
+			if err != nil {
+				return xerrors.Errorf("get scaletest users")
+			}
+
+			for _, usr := range users {
+				name := fmt.Sprintf("dashboard-%s", usr.Username)
+				userTokResp, err := client.CreateToken(ctx, usr.ID.String(), codersdk.CreateTokenRequest{
+					Lifetime:  30 * 24 * time.Hour,
+					Scope:     "",
+					TokenName: fmt.Sprintf("scaletest-%d", time.Now().Unix()),
+				})
+				if err != nil {
+					return xerrors.Errorf("create token for user: %w", err)
+				}
+
+				userClient := codersdk.New(client.URL)
+				userClient.SetSessionToken(userTokResp.Key)
+
 				config := dashboard.Config{
 					MinWait:   minWait,
 					MaxWait:   maxWait,
@@ -1105,10 +1122,11 @@ func (r *RootCmd) scaletestDashboard() *clibase.Cmd {
 					RollTable: dashboard.DefaultActions,
 					Headless:  headless,
 				}
+				logger.Info(ctx, "runner config", slog.F("min_wait", minWait), slog.F("max_wait", maxWait), slog.F("headless", headless))
 				if err := config.Validate(); err != nil {
 					return err
 				}
-				var runner harness.Runnable = dashboard.NewRunner(client, metrics, config)
+				var runner harness.Runnable = dashboard.NewRunner(userClient, metrics, config)
 				if tracingEnabled {
 					runner = &runnableTraceWrapper{
 						tracer:   tracer,

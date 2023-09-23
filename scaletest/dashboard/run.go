@@ -35,28 +35,27 @@ func NewRunner(client *codersdk.Client, metrics Metrics, cfg Config) *Runner {
 }
 
 func (r *Runner) Run(ctx context.Context, _ string, _ io.Writer) error {
+	if r.client == nil {
+		return xerrors.Errorf("client is nil")
+	}
 	me, err := r.client.User(ctx, codersdk.Me)
 	if err != nil {
-		return err
+		return xerrors.Errorf("get scaletest user: %w", err)
 	}
+	r.cfg.Logger.Info(ctx, "running as user", slog.F("username", me.Username))
 	if len(me.OrganizationIDs) == 0 {
 		return xerrors.Errorf("user has no organizations")
 	}
 
-	c := &cache{}
-	if err := c.fill(ctx, r.client); err != nil {
-		return err
-	}
-
 	p := &Params{
-		client:   r.client,
-		me:       me,
-		c:        c,
+		client: r.client,
+		me:     me,
+		//c:        c,
 		headless: r.cfg.Headless,
 	}
 	rolls := make(chan int)
 	go func() {
-		t := time.NewTicker(r.randWait())
+		t := time.NewTicker(1) // First one should be immediate
 		defer t.Stop()
 		for {
 			select {
@@ -129,7 +128,7 @@ func (r *Runner) randWait() time.Duration {
 	// nolint:gosec // This is not for cryptographic purposes. Chill, gosec. Chill.
 	var wait time.Duration
 	if r.cfg.MaxWait <= r.cfg.MinWait {
-		wait = 0
+		wait = r.cfg.MinWait
 	} else {
 		wait = time.Duration(rand.Intn(int(r.cfg.MaxWait) - int(r.cfg.MinWait)))
 	}
