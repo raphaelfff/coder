@@ -1115,12 +1115,11 @@ func (r *RootCmd) scaletestDashboard() *clibase.Cmd {
 				userClient.SetSessionToken(userTokResp.Key)
 
 				config := dashboard.Config{
-					MinWait:   minWait,
-					MaxWait:   maxWait,
-					Trace:     tracingEnabled,
-					Logger:    logger.Named(name),
-					RollTable: dashboard.DefaultActions,
-					Headless:  headless,
+					MinWait:  minWait,
+					MaxWait:  maxWait,
+					Trace:    tracingEnabled,
+					Logger:   logger.Named(name),
+					Headless: headless,
 				}
 				logger.Info(ctx, "runner config", slog.F("min_wait", minWait), slog.F("max_wait", maxWait), slog.F("headless", headless))
 				if err := config.Validate(); err != nil {

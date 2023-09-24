@@ -16,8 +16,6 @@ type Config struct {
 	Trace bool `json:"trace"`
 	// Logger is the logger to use.
 	Logger slog.Logger `json:"-"`
-	// RollTable is the set of actions to perform
-	RollTable RollTable `json:"roll_table"`
 	// Headless controls headless mode for chromedp.
 	Headless bool `json:"no_headless"`
 }

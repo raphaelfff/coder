@@ -47,83 +47,33 @@ func (r *Runner) Run(ctx context.Context, _ string, _ io.Writer) error {
 		return xerrors.Errorf("user has no organizations")
 	}
 
-	cdpCtx, cdpCancel, err := initChromeDPCtx(ctx, r.cfg.Headless)
+	cdpCtx, cdpCancel, err := initChromeDPCtx(ctx, r.client.URL, r.client.SessionToken(), r.cfg.Headless)
 	if err != nil {
 		return xerrors.Errorf("init chromedp ctx: %w", err)
 	}
 	defer cdpCancel()
-	p := &Params{
-		URL:          r.client.URL,
-		SessionToken: r.client.SessionToken(),
-		me:           me,
-	}
-	rolls := make(chan int)
-	go func() {
-		t := time.NewTicker(1) // First one should be immediate
-		defer t.Stop()
-		for {
-			select {
-			case <-cdpCtx.Done():
-				return
-			case <-t.C:
-				rolls <- rand.Intn(r.cfg.RollTable.max() + 1) // nolint:gosec
-				t.Reset(r.randWait())
-			}
-		}
-	}()
-
+	t := time.NewTicker(1) // First one should be immediate
+	defer t.Stop()
 	for {
 		select {
 		case <-cdpCtx.Done():
 			return nil
-		case n := <-rolls:
-			act := r.cfg.RollTable.choose(n)
-			r.do(cdpCtx, act, p)
+		case <-t.C:
+			t.Reset(r.randWait())
+			l, err := clickRandElement(cdpCtx, defaultSelectors)
+			if err != nil {
+				fmt.Printf("clicking element %q: %v\n", l, err)
+				r.cfg.Logger.Error(ctx, "clicking element", slog.F("label", l), slog.Error(err))
+			} else {
+				fmt.Printf("clicked element %q\n", l)
+				r.cfg.Logger.Info(ctx, "clicked element", slog.F("label", l))
+			}
 		}
 	}
 }
 
 func (*Runner) Cleanup(_ context.Context, _ string) error {
 	return nil
-}
-
-func (r *Runner) do(ctx context.Context, act RollTableEntry, p *Params) {
-	select {
-	case <-ctx.Done():
-		r.cfg.Logger.Info(ctx, "context done, stopping")
-		return
-	default:
-		var errored bool
-		start := time.Now()
-		// Cancelling here would cause chromedp to exit, so we don't do that.
-		err := act.Fn(ctx, p)
-		elapsed := time.Since(start)
-		if err != nil {
-			errored = true
-			r.cfg.Logger.Error( //nolint:gocritic
-				ctx, "action failed",
-				slog.Error(err),
-				slog.F("action", act.Label),
-				slog.F("elapsed", elapsed),
-			)
-		} else {
-			r.cfg.Logger.Info(ctx, "completed successfully",
-				slog.F("action", act.Label),
-				slog.F("elapsed", elapsed),
-			)
-		}
-		codeLabel := "200"
-		if apiErr, ok := codersdk.AsError(err); ok {
-			codeLabel = fmt.Sprintf("%d", apiErr.StatusCode())
-		} else if xerrors.Is(err, context.Canceled) {
-			codeLabel = "timeout"
-		}
-		r.metrics.ObserveDuration(act.Label, elapsed)
-		r.metrics.IncStatuses(act.Label, codeLabel)
-		if errored {
-			r.metrics.IncErrors(act.Label)
-		}
-	}
 }
 
 func (r *Runner) randWait() time.Duration {

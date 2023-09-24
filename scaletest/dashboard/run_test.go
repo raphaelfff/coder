@@ -7,14 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/xerrors"
-
 	"cdr.dev/slog/sloggers/slogtest"
 	"github.com/coder/coder/v2/coderd/coderdtest"
 	"github.com/coder/coder/v2/scaletest/dashboard"
 	"github.com/coder/coder/v2/testutil"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_Run(t *testing.T) {
@@ -29,32 +27,14 @@ func Test_Run(t *testing.T) {
 	client := coderdtest.New(t, nil)
 	_ = coderdtest.CreateFirstUser(t, client)
 
-	successfulAction := func(context.Context, *dashboard.Params) error {
-		return nil
-	}
-	failingAction := func(context.Context, *dashboard.Params) error {
-		return xerrors.Errorf("failed")
-	}
-	hangingAction := func(ctx context.Context, _ *dashboard.Params) error {
-		<-ctx.Done()
-		return ctx.Err()
-	}
-
-	testActions := []dashboard.RollTableEntry{
-		{0, successfulAction, "succeeds"},
-		{1, failingAction, "fails"},
-		{2, hangingAction, "hangs"},
-	}
-
 	log := slogtest.Make(t, &slogtest.Options{
 		IgnoreErrors: true,
 	})
 	m := &testMetrics{}
 	cfg := dashboard.Config{
-		MinWait:   time.Millisecond,
-		MaxWait:   10 * time.Millisecond,
-		Logger:    log,
-		RollTable: testActions,
+		MinWait: time.Millisecond,
+		MaxWait: 10 * time.Millisecond,
+		Logger:  log,
 	}
 	r := dashboard.NewRunner(client, m, cfg)
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.WaitShort)
