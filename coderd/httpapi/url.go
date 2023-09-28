@@ -15,7 +15,7 @@ var (
 	nameRegex = strings.Trim(UsernameValidRegex.String(), "^$")
 	appURL    = regexp.MustCompile(fmt.Sprintf(
 		// {PORT/APP_SLUG}--{AGENT_NAME}--{WORKSPACE_NAME}--{USERNAME}
-		`^(?P<AppSlug>%[1]s)--(?P<AgentName>%[1]s)--(?P<WorkspaceName>%[1]s)--(?P<Username>%[1]s)$`,
+		`^(?:%[1]s\.)?(?P<AppSlug>%[1]s)--(?P<AgentName>%[1]s)--(?P<WorkspaceName>%[1]s)--(?P<Username>%[1]s)$`,
 		nameRegex))
 
 	validHostnameLabelRegex = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
